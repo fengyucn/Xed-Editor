@@ -247,10 +247,13 @@
              PreferenceList(
                  label = stringResource(strings.ai_model),
                  description = AiSettings.modelId,
-@@ -126,6 +133,52 @@
+@@ -125,6 +132,54 @@
+                 onItemSelected = { modelId -> AiSettings.modelId = modelId },
                  customInputLabel = stringResource(strings.ai_custom_model_id),
                  customInputValue = if (models.any { it.id == AiSettings.modelId }) "" else AiSettings.modelId,
-             )
++                searchable = true,
++                searchHint = stringResource(strings.ai_search_models),
++            )
 +            val scope = rememberCoroutineScope()
 +            var refreshRunning by remember { mutableStateOf(false) }
 +            var refreshStatus by remember { mutableStateOf<RefreshStatus?>(null) }
@@ -296,16 +299,109 @@
 +                        }
 +                    }
 +                },
-+            )
+             )
          }
  
-         PreferenceGroup(heading = stringResource(strings.ai_agent)) {
-@@ -288,3 +341,5 @@
+@@ -288,3 +343,5 @@
          PermissionMode.PLAN -> strings.ai_mode_plan.getString()
          PermissionMode.YOLO -> strings.ai_mode_autonomous.getString()
      }
 +
 +private enum class RefreshStatus { RUNNING, OK, FAILED }
+--- a/core/main/src/main/java/com/rk/components/PreferenceList.kt
++++ b/core/main/src/main/java/com/rk/components/PreferenceList.kt
+@@ -25,18 +25,12 @@
+ import com.rk.resources.getString
+ import com.rk.resources.strings
+ 
+-data class PreferenceListItem<T>(
+-    val id: T,
+-    val label: String,
+-    val enabled: Boolean = true,
+-)
+-
+ /** A Preference that shows a list of options in a dialog when clicked. */
+ @Composable
+ fun <T> PreferenceList(
+     label: String,
+     description: String?,
+-    items: List<PreferenceListItem<T>>,
++    items: List<Pair<T, String>>,
+     selectedItem: T,
+     onItemSelected: (T) -> Unit,
+     modifier: Modifier = Modifier,
+@@ -45,6 +39,8 @@
+     message: @Composable (() -> Unit)? = null,
+     customInputLabel: String? = null,
+     customInputValue: String = "",
++    searchable: Boolean = false,
++    searchHint: String = "",
+ ) {
+     var showDialog by remember { mutableStateOf(value = false) }
+ 
+@@ -61,30 +57,55 @@
+     if (showDialog) {
+         var tempSelectedItem by remember { mutableStateOf(selectedItem) }
+         var tempCustomValue by remember { mutableStateOf(customInputValue) }
++        var query by remember { mutableStateOf("") }
++        val filteredItems =
++            remember(items, query, searchable) {
++                if (!searchable || query.isBlank()) items
++                else
++                    items.filter { (item, text) ->
++                        text.contains(query, ignoreCase = true) ||
++                            item.toString().contains(query, ignoreCase = true)
++                    }
++            }
+ 
+         AlertDialog(
+             onDismissRequest = { showDialog = false },
+             title = { Text(text = label) },
+             text = {
+                 Column(Modifier.verticalScroll(rememberScrollState())) {
++                    if (searchable) {
++                        OutlinedTextField(
++                            value = query,
++                            onValueChange = { query = it },
++                            modifier = Modifier.fillMaxWidth(),
++                            singleLine = true,
++                            placeholder = { Text(searchHint) },
++                        )
++                        Spacer(Modifier.height(8.dp))
++                    }
+                     message?.invoke()
+                     if (message != null) {
+                         Spacer(Modifier.height(12.dp))
+                     }
+ 
+-                    items.forEach { (id, label, enabled) ->
++                    if (filteredItems.isEmpty()) {
++                        Text(
++                            text = strings.search_no_matches.getString(),
++                            style = MaterialTheme.typography.bodyMedium,
++                        )
++                    }
++                    filteredItems.forEach { (item, string) ->
+                         PreferenceTemplate(
+                             modifier =
+-                                Modifier.clip(MaterialTheme.shapes.large).clickable(enabled) {
+-                                    tempSelectedItem = id
++                                Modifier.clip(MaterialTheme.shapes.large).clickable {
++                                    tempSelectedItem = item
+                                     tempCustomValue = ""
+                                 },
+-                            enabled = enabled,
+-                            title = { Text(text = label) },
+-                            description = { if (showIds) Text(text = id.toString()) },
++                            title = { Text(text = string) },
++                            description = { if (showIds) Text(text = item.toString()) },
+                             startWidget = {
+                                 RadioButton(
+-                                    selected = (tempSelectedItem == id) && tempCustomValue.isBlank(),
++                                    selected = (tempSelectedItem == item) && tempCustomValue.isBlank(),
+                                     onClick = null,
+                                 )
+                             },
 --- a/core/resources/src/main/res/values/strings.xml
 +++ b/core/resources/src/main/res/values/strings.xml
 @@ -537,17 +537,6 @@
@@ -326,7 +422,7 @@
      <string name="username">Username</string>
      <string name="password">Password</string>
      <string name="email">Email</string>
-@@ -979,4 +968,9 @@
+@@ -979,4 +968,11 @@
      <string name="total_storage_usage">Total used by app</string>
      <string name="calculating">Calculating…</string>
      <string name="ubuntu" translatable="false">Ubuntu</string>
@@ -335,10 +431,12 @@
 +    <string name="ai_refresh_models_ok">Updated %1$d models</string>
 +    <string name="ai_refresh_models_fail">Refresh failed (check API key or network)</string>
 +    <string name="ai_models_cached">%1$d models</string>
++    <string name="ai_search_models">Search models</string>
++    <string name="search_no_matches">No matches</string>
  </resources>
 --- a/core/resources/src/main/res/values-zh/strings.xml
 +++ b/core/resources/src/main/res/values-zh/strings.xml
-@@ -958,4 +958,9 @@
+@@ -958,4 +958,11 @@
      <string name="suggestions_autocorrect">建议 + 自动更正</string>
      <string name="input_behavior">输入行为</string>
      <string name="input_behavior_msg">实际输入行为因输入法而异。由于中日韩语依赖建议，这些语言的用户应当避免使用“没有建议”选项。</string>
@@ -347,6 +445,8 @@
 +    <string name="ai_refresh_models_ok">已更新 %1$d 个模型</string>
 +    <string name="ai_refresh_models_fail">刷新失败（检查 API Key 或网络）</string>
 +    <string name="ai_models_cached">%1$d 个模型</string>
++    <string name="ai_search_models">搜索模型</string>
++    <string name="search_no_matches">无匹配项</string>
  </resources>
 --- /dev/null
 +++ b/features/ai/src/main/java/com/rk/ai/provider/AiModelStore.kt
