@@ -34,6 +34,8 @@ scripts/apply-patches.sh check                 # 只检查
 设置页「AI → 刷新模型列表」会 `GET {baseUrl}/models` 拉取并缓存（OpenAI 兼容格式）；
 未刷新时用内置列表，刷新后优先用缓存。
 
+模型选择弹窗带搜索框（按 id / 显示名过滤），适合 OpenRouter 这类几百个模型的供应商。
+
 ## 构建
 
 ```bash
