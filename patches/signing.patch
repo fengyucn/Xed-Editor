@@ -1,0 +1,15 @@
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -70,9 +70,12 @@
+         create("release") {
+             val isGitHubActions = System.getenv("GITHUB_ACTIONS") == "true"
+ 
++            val localSigning = rootProject.file("signing.properties")
+             val propertiesFilePath =
+                 if (isGitHubActions) {
+                     "/tmp/signing.properties"
++                } else if (localSigning.exists()) {
++                    localSigning.absolutePath            // abuild: 自用签名
+                 } else {
+                     "/home/rohit/Android/xed-signing/signing.properties"
+                 }
