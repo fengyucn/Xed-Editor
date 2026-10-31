@@ -1,0 +1,394 @@
+--- a/features/ai/src/main/java/com/rk/ai/provider/BuiltinProviders.kt
++++ b/features/ai/src/main/java/com/rk/ai/provider/BuiltinProviders.kt
+@@ -1,66 +1,60 @@
+ package com.rk.ai.provider
+ 
+ import ai.koog.http.client.ktor.KtorKoogHttpClient
+-import ai.koog.prompt.executor.clients.anthropic.AnthropicModels
+ import ai.koog.prompt.executor.clients.openai.OpenAIClientSettings
+ import ai.koog.prompt.executor.clients.openai.OpenAILLMClient
+ import ai.koog.prompt.executor.llms.MultiLLMPromptExecutor
+ import ai.koog.prompt.executor.model.PromptExecutor
+ import ai.koog.prompt.llm.LLMProvider
+-import ai.koog.prompt.llm.LLModel
+ import androidx.compose.ui.graphics.vector.ImageVector
+-import com.rk.ai.icons.AnthropicIcon
+-import com.rk.ai.icons.OpenAiIcon
++import com.rk.ai.icons.AiBrain
++import com.rk.ai.icons.SparklesBig
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.withContext
++import okhttp3.OkHttpClient
++import okhttp3.Request
++import org.json.JSONObject
+ 
+ object BuiltinProviders {
+-    const val OPENAI_ID = "openai"
+-    const val ANTHROPIC_ID = "anthropic"
++    const val ZAI_ID = "zai"
++    const val OPENROUTER_ID = "openrouter"
+ 
+-    val openAi: AiProvider =
++    /** Z.ai GLM Coding Plan（OpenAI 兼容端点）。 */
++    val zai: AiProvider =
+         OpenAiCompatibleProvider(
+-            id = OPENAI_ID,
+-            displayName = "OpenAI",
+-            icon = OpenAiIcon,
+-            baseUrl = "https://api.openai.com",
+-            requestPath = "v1/chat/completions",
++            id = ZAI_ID,
++            displayName = "Z.ai · GLM Coding Plan",
++            icon = AiBrain,
++            baseUrl = "https://api.z.ai/api/coding/paas/v4",
++            requestPath = "chat/completions",
+             models =
+                 listOf(
+-                    AiModel(id = "gpt-4o", providerId = OPENAI_ID),
+-                    AiModel(id = "gpt-4o-mini", providerId = OPENAI_ID),
+-                    AiModel(id = "gpt-4.1", providerId = OPENAI_ID),
+-                    AiModel(id = "gpt-4.1-mini", providerId = OPENAI_ID),
++                    AiModel(id = "glm-4.6", providerId = ZAI_ID, displayName = "GLM-4.6", contextWindowTokens = 200_000),
++                    AiModel(id = "glm-4.5", providerId = ZAI_ID, displayName = "GLM-4.5", contextWindowTokens = 128_000),
++                    AiModel(id = "glm-4.5-air", providerId = ZAI_ID, displayName = "GLM-4.5 Air", contextWindowTokens = 128_000),
+                 ),
+         )
+ 
+-    val anthropic: AiProvider =
+-        AnthropicProvider(
+-            id = ANTHROPIC_ID,
+-            displayName = "Anthropic",
+-            icon = AnthropicIcon,
++    /** OpenRouter 聚合网关（OpenAI 兼容端点）。 */
++    val openRouter: AiProvider =
++        OpenAiCompatibleProvider(
++            id = OPENROUTER_ID,
++            displayName = "OpenRouter",
++            icon = SparklesBig,
++            baseUrl = "https://openrouter.ai/api/v1",
++            requestPath = "chat/completions",
+             models =
+                 listOf(
+-                    anthropicModel(AnthropicModels.Sonnet_4_6, "Claude Sonnet 4.6"),
+-                    anthropicModel(AnthropicModels.Sonnet_4_5, "Claude Sonnet 4.5"),
+-                    anthropicModel(AnthropicModels.Opus_4_7, "Claude Opus 4.7"),
+-                    anthropicModel(AnthropicModels.Opus_4_6, "Claude Opus 4.6"),
+-                    anthropicModel(AnthropicModels.Opus_4_5, "Claude Opus 4.5"),
+-                    anthropicModel(AnthropicModels.Haiku_4_5, "Claude Haiku 4.5"),
++                    AiModel(id = "z-ai/glm-4.6", providerId = OPENROUTER_ID, displayName = "GLM-4.6", contextWindowTokens = 200_000),
++                    AiModel(id = "deepseek/deepseek-chat", providerId = OPENROUTER_ID, displayName = "DeepSeek Chat", contextWindowTokens = 64_000),
++                    AiModel(id = "qwen/qwen3-coder", providerId = OPENROUTER_ID, displayName = "Qwen3 Coder", contextWindowTokens = 262_144),
++                    AiModel(id = "moonshotai/kimi-k2", providerId = OPENROUTER_ID, displayName = "Kimi K2", contextWindowTokens = 131_072),
+                 ),
+         )
+ 
+-    fun all(): List<AiProvider> = listOf(openAi, anthropic)
+-
+-    fun default(): AiProvider = anthropic
++    fun all(): List<AiProvider> = listOf(zai, openRouter)
+ 
+-    private fun anthropicModel(model: LLModel, displayName: String): AiModel =
+-        AiModel(
+-            id = model.id,
+-            providerId = ANTHROPIC_ID,
+-            displayName = displayName,
+-            capabilities = model.capabilities.orEmpty(),
+-            contextWindowTokens = model.contextLength?.toInt(),
+-            llmModel = model,
+-        )
++    fun default(): AiProvider = zai
+ }
+ 
+ /** Speaks the OpenAI chat-completions protocol; pass [executorFactory] to swap the client. */
+@@ -79,6 +73,27 @@
+     override fun createExecutor(config: AiProviderConfig): PromptExecutor =
+         executorFactory?.invoke(config) ?: openAiExecutor(config)
+ 
++    /** GET {baseUrl}/models (OpenAI-compatible). */
++    override suspend fun fetchModels(config: AiProviderConfig): List<AiModel> =
++        withContext(Dispatchers.IO) {
++            val request =
++                Request.Builder()
++                    .url(config.baseUrl.trimEnd('/') + "/models")
++                    .header("Accept", "application/json")
++                    .apply {
++                        if (config.apiKey.isNotBlank()) header("Authorization", "Bearer ${config.apiKey}")
++                        header("HTTP-Referer", "https://github.com/Xed-Editor/Xed-Editor")
++                        header("X-Title", "Xed-Editor")
++                    }
++                    .build()
++            runCatching {
++                OkHttpClient().newCall(request).execute().use { response ->
++                    if (!response.isSuccessful) emptyList()
++                    else parseModelList(response.body?.string().orEmpty(), id)
++                }
++            }.getOrDefault(emptyList())
++        }
++
+     private fun openAiExecutor(config: AiProviderConfig): PromptExecutor =
+         MultiLLMPromptExecutor(
+             OpenAILLMClient(
+@@ -92,3 +107,21 @@
+             )
+         )
+ }
++
++private fun parseModelList(body: String, providerId: String): List<AiModel> {
++    val data = runCatching { JSONObject(body).optJSONArray("data") }.getOrNull() ?: return emptyList()
++    return (0 until data.length()).mapNotNull { index ->
++        val item = data.optJSONObject(index) ?: return@mapNotNull null
++        val modelId = item.optString("id").trim()
++        if (modelId.isEmpty()) return@mapNotNull null
++        val name = item.optString("name").trim().ifEmpty { modelId }
++        val context =
++            when {
++                    item.has("context_length") -> item.optInt("context_length")
++                    item.has("context_window") -> item.optInt("context_window")
++                    else -> item.optJSONObject("top_provider")?.optInt("context_length") ?: 0
++                }
++                .takeIf { it > 0 }
++        AiModel(id = modelId, providerId = providerId, displayName = name, contextWindowTokens = context)
++    }
++}
+--- a/features/ai/src/main/java/com/rk/ai/provider/AiProvider.kt
++++ b/features/ai/src/main/java/com/rk/ai/provider/AiProvider.kt
+@@ -38,4 +38,7 @@
+ 
+     /** Called and cached by [AiProviderRuntime]. */
+     fun createExecutor(config: AiProviderConfig): PromptExecutor
++
++    /** Fetches the provider's current model list; empty when it cannot be discovered. */
++    suspend fun fetchModels(config: AiProviderConfig): List<AiModel> = emptyList()
+ }
+--- a/features/ai/src/main/java/com/rk/ai/provider/AiModelRegistry.kt
++++ b/features/ai/src/main/java/com/rk/ai/provider/AiModelRegistry.kt
+@@ -44,7 +44,9 @@
+ 
+ object AiModelCatalog {
+     fun modelsFor(providerId: String): List<AiModel> {
+-        val providerModels = AiProviderRegistry.find(providerId)?.models.orEmpty()
++        // 优先使用 /models 刷新后的缓存，未刷新过则回落到内置列表
++        val providerModels =
++            AiModelStore.load(providerId) ?: AiProviderRegistry.find(providerId)?.models.orEmpty()
+         return (providerModels + AiModelRegistry.forProvider(providerId)).distinctBy { it.id }
+     }
+ 
+--- a/features/ai/src/main/java/com/rk/ai/settings/AiSettings.kt
++++ b/features/ai/src/main/java/com/rk/ai/settings/AiSettings.kt
+@@ -7,12 +7,12 @@
+ import kotlinx.serialization.json.Json
+ 
+ object AiSettings {
+-    /** Must match the DeepSeek built-in provider id. */
+-    const val DEFAULT_PROVIDER_ID = "deepseek"
++    /** Must match a built-in provider id (Z.ai by default). */
++    const val DEFAULT_PROVIDER_ID = "zai"
+ 
+     var providerId by CachedPreference("ai_provider_id", DEFAULT_PROVIDER_ID)
+ 
+-    var modelId by CachedPreference("ai_model_id", "deepseek-chat")
++    var modelId by CachedPreference("ai_model_id", "glm-4.6")
+ 
+     var systemPrompt by CachedPreference("ai_system_prompt", DEFAULT_SYSTEM_PROMPT)
+ 
+--- a/features/ai/src/main/java/com/rk/ai/settings/AiSettingsScreen.kt
++++ b/features/ai/src/main/java/com/rk/ai/settings/AiSettingsScreen.kt
+@@ -24,8 +24,10 @@
+ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.collectAsState
+ import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableIntStateOf
+ import androidx.compose.runtime.mutableStateOf
+ import androidx.compose.runtime.remember
++import androidx.compose.runtime.rememberCoroutineScope
+ import androidx.compose.runtime.setValue
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.draw.clip
+@@ -35,18 +37,20 @@
+ import androidx.compose.ui.unit.dp
+ import com.rk.ai.api.AiExtensions
+ import com.rk.ai.provider.AiModelCatalog
++import com.rk.ai.provider.AiModelStore
+ import com.rk.ai.provider.AiProvider
++import com.rk.ai.provider.AiProviderConfig
+ import com.rk.ai.provider.AiProviderRuntime
+ import com.rk.ai.tools.AiTool
+ import com.rk.components.NextScreenCard
+ import com.rk.components.PreferenceList
+-import com.rk.components.PreferenceListItem
+ import com.rk.components.SettingsItem
+ import com.rk.components.SingleInputDialog
+ import com.rk.components.compose.preferences.base.PreferenceGroup
+ import com.rk.components.compose.preferences.base.PreferenceLayout
+ import com.rk.components.compose.preferences.base.PreferenceTemplate
+ import com.rk.resources.getString
++import kotlinx.coroutines.launch
+ import com.rk.resources.strings
+ 
+ @Composable
+@@ -57,7 +61,10 @@
+     val providers by AiExtensions.providers.collectAsState()
+     val tools by AiExtensions.tools.collectAsState()
+     val provider = providers.firstOrNull { it.id == AiSettings.providerId } ?: providers.firstOrNull()
+-    val models = provider?.let { AiModelCatalog.modelsFor(it.id) }.orEmpty()
++    var modelsVersion by remember { mutableIntStateOf(0) }
++    val models = remember(modelsVersion, provider?.id) {
++        provider?.let { AiModelCatalog.modelsFor(it.id) }.orEmpty()
++    }
+     val apiKey = provider?.let { AiSettings.apiKey(it.id) }.orEmpty()
+ 
+     PreferenceLayout(label = stringResource(strings.ai_feature_label), modifier = modifier) {
+@@ -115,7 +122,7 @@
+                 )
+             }
+ 
+-            val modelItems = models.map { PreferenceListItem(it.id, it.displayName) }
++            val modelItems = models.map { it.id to it.displayName }
+             PreferenceList(
+                 label = stringResource(strings.ai_model),
+                 description = AiSettings.modelId,
+@@ -126,6 +133,52 @@
+                 customInputLabel = stringResource(strings.ai_custom_model_id),
+                 customInputValue = if (models.any { it.id == AiSettings.modelId }) "" else AiSettings.modelId,
+             )
++            val scope = rememberCoroutineScope()
++            var refreshRunning by remember { mutableStateOf(false) }
++            var refreshStatus by remember { mutableStateOf<RefreshStatus?>(null) }
++            var refreshCount by remember { mutableIntStateOf(0) }
++            SettingsItem(
++                label = stringResource(strings.ai_refresh_models),
++                description =
++                    when (refreshStatus) {
++                        RefreshStatus.RUNNING -> stringResource(strings.ai_refresh_models_running)
++                        RefreshStatus.OK -> stringResource(strings.ai_refresh_models_ok, refreshCount)
++                        RefreshStatus.FAILED -> stringResource(strings.ai_refresh_models_fail)
++                        null -> stringResource(strings.ai_models_cached, models.size)
++                    },
++                showSwitch = false,
++                isEnabled = !refreshRunning,
++                onClick = {
++                    provider?.let { p ->
++                        scope.launch {
++                            refreshRunning = true
++                            refreshStatus = RefreshStatus.RUNNING
++                            val fetched =
++                                runCatching {
++                                    p.fetchModels(
++                                        AiProviderConfig(
++                                            apiKey = AiSettings.apiKey(p.id),
++                                            baseUrl = p.baseUrl,
++                                            requestPath = p.requestPath,
++                                            modelId = AiSettings.modelId,
++                                        )
++                                    )
++                                }
++                                    .getOrNull()
++                                    .orEmpty()
++                            refreshRunning = false
++                            if (fetched.isEmpty()) {
++                                refreshStatus = RefreshStatus.FAILED
++                            } else {
++                                AiModelStore.save(p.id, fetched)
++                                refreshCount = fetched.size
++                                modelsVersion++
++                                refreshStatus = RefreshStatus.OK
++                            }
++                        }
++                    }
++                },
++            )
+         }
+ 
+         PreferenceGroup(heading = stringResource(strings.ai_agent)) {
+@@ -288,3 +341,5 @@
+         PermissionMode.PLAN -> strings.ai_mode_plan.getString()
+         PermissionMode.YOLO -> strings.ai_mode_autonomous.getString()
+     }
++
++private enum class RefreshStatus { RUNNING, OK, FAILED }
+--- a/core/resources/src/main/res/values/strings.xml
++++ b/core/resources/src/main/res/values/strings.xml
+@@ -537,17 +537,6 @@
+     <string name="credentials_desc">Credentials for accessing remote repositories</string>
+     <string name="user_data">User data</string>
+     <string name="user_data_desc">User data that will appear in your Git commits</string>
+-    <string name="signing">Signing</string>
+-    <string name="commit_signing">Commit signing</string>
+-    <string name="commit_signing_desc">Sign Git commits using GPG or SSH key</string>
+-    <string name="signing_format">Signing format</string>
+-    <string name="signing_format_desc">Select the key format used for commit signing</string>
+-    <string name="gpg_key">GPG key</string>
+-    <string name="gpg_key_desc">GPG private key and optional passphrase for commit signing</string>
+-    <string name="gpg_key_input_title">GPG credentials</string>
+-    <string name="gpg_key_input_label">GPG private key (ASCII-armored)</string>
+-    <string name="gpg_passphrase_input_label">Key passphrase (optional)</string>
+-    <string name="gpg_key_missing">GPG signing is enabled, but no GPG key is set in settings.</string>
+     <string name="username">Username</string>
+     <string name="password">Password</string>
+     <string name="email">Email</string>
+@@ -979,4 +968,9 @@
+     <string name="total_storage_usage">Total used by app</string>
+     <string name="calculating">Calculating…</string>
+     <string name="ubuntu" translatable="false">Ubuntu</string>
++    <string name="ai_refresh_models">Refresh models</string>
++    <string name="ai_refresh_models_running">Refreshing…</string>
++    <string name="ai_refresh_models_ok">Updated %1$d models</string>
++    <string name="ai_refresh_models_fail">Refresh failed (check API key or network)</string>
++    <string name="ai_models_cached">%1$d models</string>
+ </resources>
+--- a/core/resources/src/main/res/values-zh/strings.xml
++++ b/core/resources/src/main/res/values-zh/strings.xml
+@@ -958,4 +958,9 @@
+     <string name="suggestions_autocorrect">建议 + 自动更正</string>
+     <string name="input_behavior">输入行为</string>
+     <string name="input_behavior_msg">实际输入行为因输入法而异。由于中日韩语依赖建议，这些语言的用户应当避免使用“没有建议”选项。</string>
++    <string name="ai_refresh_models">刷新模型列表</string>
++    <string name="ai_refresh_models_running">刷新中…</string>
++    <string name="ai_refresh_models_ok">已更新 %1$d 个模型</string>
++    <string name="ai_refresh_models_fail">刷新失败（检查 API Key 或网络）</string>
++    <string name="ai_models_cached">%1$d 个模型</string>
+ </resources>
+--- /dev/null
++++ b/features/ai/src/main/java/com/rk/ai/provider/AiModelStore.kt
+@@ -0,0 +1,41 @@
++package com.rk.ai.provider
++
++import com.rk.settings.Preference
++
++/** Caches a provider's model list fetched from its `/models` endpoint. */
++object AiModelStore {
++    private fun key(providerId: String) =
++        "ai_models_cache_" + providerId.replace(Regex("[^A-Za-z0-9_-]"), "_")
++
++    /** Returns null when nothing has been fetched yet (fall back to the built-in list). */
++    fun load(providerId: String): List<AiModel>? {
++        val raw = Preference.getString(key(providerId), "")
++        if (raw.isBlank()) return null
++        return raw.lineSequence()
++            .mapNotNull { line ->
++                val parts = line.split('\t')
++                val id = parts.getOrNull(0)?.trim().orEmpty()
++                if (id.isEmpty()) null
++                else
++                    AiModel(
++                        id = id,
++                        providerId = providerId,
++                        displayName = parts.getOrNull(1)?.trim()?.ifBlank { id } ?: id,
++                        contextWindowTokens = parts.getOrNull(2)?.toIntOrNull(),
++                    )
++            }
++            .toList()
++            .ifEmpty { null }
++    }
++
++    fun save(providerId: String, models: List<AiModel>) {
++        Preference.setString(
++            key(providerId),
++            models.joinToString("\n") { m ->
++                listOfNotNull(m.id, m.displayName, m.contextWindowTokens?.toString()).joinToString("\t")
++            },
++        )
++    }
++
++    fun clear(providerId: String) = Preference.setString(key(providerId), "")
++}
